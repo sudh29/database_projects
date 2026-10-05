@@ -1,0 +1,84 @@
+[
+  {
+    "_id": "prod_101",
+    "name": "UltraBook Pro 16",
+    "category": "Electronics",
+    "price": 1499.99,
+    "inStock": true,
+    "inventory": 45,
+    "tags": ["laptop", "workstation", "apple-m3"],
+    "attributes": {
+      "screenSize": "16 inch",
+      "ramGb": 32,
+      "storageGb": 1024,
+      "processor": "M3 Pro",
+      "batteryLifeHours": 18
+    },
+    "ratings": {
+      "average": 4.8,
+      "reviewCount": 128
+    },
+    "createdAt": "2026-01-10T10:00:00Z"
+  },
+  {
+    "_id": "prod_102",
+    "name": "Wireless Noise-Cancelling Headphones",
+    "category": "Electronics",
+    "price": 299.99,
+    "inStock": true,
+    "inventory": 120,
+    "tags": ["audio", "bluetooth", "travel"],
+    "attributes": {
+      "batteryLifeHours": 30,
+      "connectivity": "Bluetooth 5.3",
+      "noiseCancellation": "Active",
+      "weightGrams": 250
+    },
+    "ratings": {
+      "average": 4.6,
+      "reviewCount": 340
+    },
+    "createdAt": "2026-02-15T12:30:00Z"
+  },
+  {
+    "_id": "prod_201",
+    "name": "Merino Wool Thermal Sweater",
+    "category": "Apparel",
+    "price": 89.50,
+    "inStock": true,
+    "inventory": 85,
+    "tags": ["clothing", "winter", "wool"],
+    "attributes": {
+      "sizes": ["S", "M", "L", "XL"],
+      "material": "100% Merino Wool",
+      "colors": ["Navy", "Charcoal", "Burgundy"],
+      "care": "Hand wash cold"
+    },
+    "ratings": {
+      "average": 4.4,
+      "reviewCount": 64
+    },
+    "createdAt": "2026-03-01T09:15:00Z"
+  },
+  {
+    "_id": "prod_301",
+    "name": "Designing Data-Intensive Applications",
+    "category": "Books",
+    "price": 42.00,
+    "inStock": true,
+    "inventory": 210,
+    "tags": ["database", "systems", "architecture"],
+    "attributes": {
+      "author": "Martin Kleppmann",
+      "isbn": "978-1449373320",
+      "pageCount": 616,
+      "format": "Paperback",
+      "publisher": "O'Reilly Media"
+    },
+    "ratings": {
+      "average": 4.95,
+      "reviewCount": 1540
+    },
+    "createdAt": "2026-01-05T08:00:00Z"
+  }
+]
