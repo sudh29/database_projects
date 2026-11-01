@@ -5,18 +5,84 @@ Calculates daily average savings per customer grouped by age from PostgreSQL.
 
 import json
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 try:
     import psycopg2
-    from psycopg2 import extras
+    from psycopg2 import extras, pool
 except ImportError:
     import types
     psycopg2 = types.ModuleType("psycopg2")
     psycopg2.connect = None
     extras = types.ModuleType("extras")
+    pool = types.ModuleType("pool")
+
+    class DummyPool:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+
+        def getconn(self):
+            return psycopg2.connect() if callable(psycopg2.connect) else None
+
+        def putconn(self, conn):
+            pass
+
+        def closeall(self):
+            self.closed = True
+
+    pool.ThreadedConnectionPool = DummyPool
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+_connection_pools = {}
+
+
+def get_connection_pool(db_params: dict, minconn: int = 1, maxconn: int = 10):
+    """
+    Returns or initializes a thread-safe connection pool for PostgreSQL.
+    Prevents opening unpooled, single-use connections per query.
+    """
+    key = (db_params["host"], db_params.get("port", 5432), db_params["database"], db_params["username"])
+    if key not in _connection_pools or getattr(_connection_pools[key], "closed", False):
+        if hasattr(psycopg2, "pool") and hasattr(psycopg2.pool, "ThreadedConnectionPool"):
+            try:
+                _connection_pools[key] = psycopg2.pool.ThreadedConnectionPool(
+                    minconn,
+                    maxconn,
+                    dbname=db_params["database"],
+                    user=db_params["username"],
+                    password=db_params["password"],
+                    host=db_params["host"],
+                    port=db_params.get("port", 5432),
+                )
+            except Exception as e:
+                logging.warning(f"Could not initialize connection pool: {e}")
+                return None
+        else:
+            return None
+    return _connection_pools[key]
+
+
+@contextmanager
+def get_db_connection(db_params: dict):
+    """
+    Context manager that checks out a connection from the pool if available,
+    falling back to direct connection if pool is unavailable, and ensures safe return/closure.
+    """
+    pool_instance = get_connection_pool(db_params)
+    if pool_instance:
+        conn = pool_instance.getconn()
+        try:
+            yield conn
+        finally:
+            pool_instance.putconn(conn)
+    else:
+        conn = connect_db(db_params)
+        try:
+            yield conn
+        finally:
+            close_connection(conn)
 
 
 def connect_db(db_params: dict):
@@ -98,28 +164,21 @@ def calculate_savings(events, context=None):
         if not target_date:
             raise ValueError(f"Invalid date format for '{date_str}'. Expected 'dd/mm/yyyy' or 'YYYY-MM-DD'")
 
-        # Step 2: Connect to PostgreSQL
-        connection = psycopg2.connect(
-            dbname=payload["database"],
-            user=payload["username"],
-            password=payload["password"],
-            host=payload["host"],
-            port=payload.get("port", 5432),
-        )
-
-        with connection.cursor() as cursor:
-            # Query transactions on the target date (using date truncation to match timestamps)
-            target_date_only = target_date.date()
-            cursor.execute(
-                """
-                SELECT t.customer_id, t.txn_type, t.txn_amount, c.date_of_birth
-                FROM transactions t
-                JOIN customer c ON t.customer_id = c.customer_id
-                WHERE t.transaction_date::date = %s
-                """,
-                (target_date_only,),
-            )
-            rows = cursor.fetchall()
+        # Step 2: Connect to PostgreSQL via connection pool
+        with get_db_connection(payload) as connection:
+            with connection.cursor() as cursor:
+                # Query transactions on the target date (using date truncation to match timestamps)
+                target_date_only = target_date.date()
+                cursor.execute(
+                    """
+                    SELECT t.customer_id, t.txn_type, t.txn_amount, c.date_of_birth
+                    FROM transactions t
+                    JOIN customer c ON t.customer_id = c.customer_id
+                    WHERE t.transaction_date::date = %s
+                    """,
+                    (target_date_only,),
+                )
+                rows = cursor.fetchall()
 
         # Step 3: Compute net savings per customer (credit - debit)
         # Structure: customer_id -> {"net_savings": Decimal, "date_of_birth": datetime}
@@ -179,14 +238,6 @@ def calculate_savings_sql_optimized(events, context=None):
             except ValueError:
                 continue
 
-        connection = psycopg2.connect(
-            dbname=payload["database"],
-            user=payload["username"],
-            password=payload["password"],
-            host=payload["host"],
-            port=payload.get("port", 5432),
-        )
-
         query = """
         WITH customer_daily_savings AS (
             SELECT 
@@ -205,15 +256,14 @@ def calculate_savings_sql_optimized(events, context=None):
         GROUP BY age
         ORDER BY age;
         """
-        with connection.cursor() as cursor:
-            cursor.execute(query, (target_date, target_date))
-            results = {row[0]: row[1] for row in cursor.fetchall()}
+        with get_db_connection(payload) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, (target_date, target_date))
+                results = {row[0]: row[1] for row in cursor.fetchall()}
 
         return {"statusCode": 200, "data": results}
     except Exception as e:
         return {"statusCode": 400, "message": str(e)}
-    finally:
-        close_connection(connection)
 
 
 def main():

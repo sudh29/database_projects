@@ -5,8 +5,15 @@ Window Functions, and Query Execution Planning (EXPLAIN ANALYZE).
 """
 
 import logging
-import psycopg2
-from psycopg2 import extras
+try:
+    import psycopg2
+    from psycopg2 import extras
+except ImportError:
+    import types
+    psycopg2 = types.ModuleType("psycopg2")
+    psycopg2.connect = None
+    extras = types.ModuleType("extras")
+    extras.DictCursor = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 

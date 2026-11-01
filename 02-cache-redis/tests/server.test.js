@@ -5,6 +5,7 @@
 
 const assert = require("assert");
 const CacheManager = require("../src/cacheManager");
+const { createRateLimiter } = require("../src/rateLimiter");
 
 async function testCacheManager() {
     console.log("Running CacheManager tests...");
@@ -66,9 +67,109 @@ async function testCacheManager() {
     console.log("✔ All CacheManager tests passed successfully!\n");
 }
 
+async function testRateLimiter() {
+    console.log("Running RateLimiter tests...");
+
+    function createMockRedis(isOpen = true) {
+        let items = [];
+        return {
+            isOpen,
+            multi() {
+                let countBeforeAdd = 0;
+                return {
+                    zRemRangeByScore(key, min, max) {
+                        items = items.filter(ts => ts > max);
+                        return this;
+                    },
+                    zCard(key) {
+                        countBeforeAdd = items.length;
+                        return this;
+                    },
+                    zAdd(key, obj) {
+                        items.push(obj.score);
+                        return this;
+                    },
+                    expire(key, sec) {
+                        return this;
+                    },
+                    async exec() {
+                        return [1, countBeforeAdd, 1, 1];
+                    }
+                };
+            }
+        };
+    }
+
+    function createMockReqRes() {
+        const headers = {};
+        let statusCode = 200;
+        let jsonBody = null;
+        let nextCalled = false;
+
+        const req = {
+            headers: { "x-forwarded-for": "192.168.1.100" },
+            socket: { remoteAddress: "192.168.1.100" }
+        };
+
+        const res = {
+            setHeader(k, v) {
+                headers[k] = v;
+            },
+            status(code) {
+                statusCode = code;
+                return this;
+            },
+            json(body) {
+                jsonBody = body;
+                return this;
+            }
+        };
+
+        const next = () => {
+            nextCalled = true;
+        };
+
+        return { req, res, headers, getStatus: () => statusCode, getBody: () => jsonBody, isNext: () => nextCalled, next };
+    }
+
+    const mockRedis = createMockRedis(true);
+    const limiter = createRateLimiter(mockRedis, { windowMs: 60000, maxRequests: 2 });
+
+    // Request 1: should pass
+    const ctx1 = createMockReqRes();
+    await limiter(ctx1.req, ctx1.res, ctx1.next);
+    assert.strictEqual(ctx1.isNext(), true, "Request 1 should call next()");
+    assert.strictEqual(ctx1.headers["X-RateLimit-Limit"], 2);
+    assert.strictEqual(ctx1.headers["X-RateLimit-Remaining"], 1);
+
+    // Request 2: should pass
+    const ctx2 = createMockReqRes();
+    await limiter(ctx2.req, ctx2.res, ctx2.next);
+    assert.strictEqual(ctx2.isNext(), true, "Request 2 should call next()");
+    assert.strictEqual(ctx2.headers["X-RateLimit-Remaining"], 0);
+
+    // Request 3: should be rate-limited (429)
+    const ctx3 = createMockReqRes();
+    await limiter(ctx3.req, ctx3.res, ctx3.next);
+    assert.strictEqual(ctx3.isNext(), false, "Request 3 should NOT call next() on 429");
+    assert.strictEqual(ctx3.getStatus(), 429, "Status should be 429 Too Many Requests");
+    assert.strictEqual(ctx3.headers["Retry-After"], 60);
+    assert.strictEqual(ctx3.getBody().error, "Too Many Requests");
+
+    // Graceful degradation when Redis is offline
+    const offlineRedis = createMockRedis(false);
+    const offlineLimiter = createRateLimiter(offlineRedis, { windowMs: 60000, maxRequests: 2 });
+    const ctxOffline = createMockReqRes();
+    await offlineLimiter(ctxOffline.req, ctxOffline.res, ctxOffline.next);
+    assert.strictEqual(ctxOffline.isNext(), true, "Offline Redis should gracefully allow request via next()");
+
+    console.log("✔ All RateLimiter tests passed successfully!\n");
+}
+
 async function run() {
     try {
         await testCacheManager();
+        await testRateLimiter();
         console.log("=========================================");
         console.log("All Redis module tests completed with OK.");
         console.log("=========================================");
